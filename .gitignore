@@ -6,3 +6,5 @@ renv/library/
 renv/staging/
 data/
 output/
+.DS_Store
+Thumbs.db
