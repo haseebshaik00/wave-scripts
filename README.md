@@ -51,5 +51,5 @@ source("R/setup.R") # Run source("R/setup.R") in console - make sure you are in 
 - Make sure you run the following commands when adding/removing/updating packages:
 ```bash
 install.packages("packagename")
-reNv::snapshot()
+renv::snapshot()
 ```
