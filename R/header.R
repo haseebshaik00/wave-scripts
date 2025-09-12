@@ -2,6 +2,7 @@ library(dplyr)
 library(lubridate)
 library(purrr)
 library(tidyr)
+library(data.table)
 
 # ----------------------------
 # Define base Box path
@@ -46,7 +47,7 @@ if (dir.exists(eda_date_path)) {
   day_eda_excel_files <- list.files(
     eda_date_path,
     pattern = "\\.(csv|xls|xlsx)$",   # pick Excel/CSV files
-    full.names = FALSE,
+    full.names = TRUE,                # now returns full paths
     recursive = FALSE
   )
 } else {

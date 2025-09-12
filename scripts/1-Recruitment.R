@@ -53,11 +53,14 @@ get_largest_ecg_file <- function(pid_folder) {
   }
 }
 
-# Apply to all PID subfolders from the chosen date
-selected_ecg_files <- lapply(month_ecg_subfolders, get_largest_ecg_file)
+# # Apply to all PID subfolders from the chosen date
+# selected_ecg_files <- lapply(month_ecg_subfolders, get_largest_ecg_file)
+# selected_ecg_files <- unlist(selected_ecg_files, use.names = FALSE)
+# # Drop missing (NA) entries
+# selected_ecg_files <- Filter(Negate(is.na), selected_ecg_files)
 
-# Drop missing (NA) entries
-selected_ecg_files <- Filter(Negate(is.na), selected_ecg_files)
+selected_ecg_files <- sapply(day_ecg_subfolders, get_largest_ecg_file, USE.NAMES = FALSE)
+selected_ecg_files <- selected_ecg_files[!is.na(selected_ecg_files)]
 
 # Print results
 print(selected_ecg_files)
@@ -195,8 +198,8 @@ cat("-----------------------------------------\n")
 # cat("-----------------------------------------\n")
 # 
 # # --------------- Debug: Print rows for PID 45001 from Mirage raw files (with file path) ---------------
-# cat("\n --- [Debug] Extracting Mirage rows for PID 45001 (with source file path) ---------------\n")
-# 
+# cat("\n --- Extracting Mirage rows for PID 45001 (with source file path) ---------------\n")
+# # This is for the data 2023-03-11 (11th March, 2025)
 # pid_to_check <- "45001"
 # 
 # # Read all raw Mirage files and add file path as a column
@@ -220,6 +223,7 @@ cat("-----------------------------------------\n")
 # print(mirage_pid_rows)
 # cat("-----------------------------------------------\n")
 
+
 # --------------- Step - 5: ANS (Autonomic Nervous System) merging pipeline ---------------
 ################################################################################################
 ### Block 1: Prepare Mirage Data (already filtered + cleaned earlier) ###
@@ -238,6 +242,19 @@ mirage.correct <- mirage.correct %>%
 ################################################################################################
 ### Block 2: Process ECG Files ###
 ################################################################################################
+parse_pid_from_path <- function(path) {
+  path <- normalizePath(path, winslash = "/", mustWork = FALSE)
+  parent <- basename(dirname(path))
+  pid <- suppressWarnings(as.integer(parent))
+  if (!is.na(pid)) return(pid)
+  hits <- regmatches(path, gregexpr("\\b\\d{5,}\\b", path))[[1]]
+  if (length(hits)) return(as.integer(hits[1]))
+  NA_integer_
+}
+
+to_posix <- function(x) {
+  as.POSIXct(ifelse(x > 1e12, x/1000, x), origin = "1970-01-01", tz = "UTC")
+}
 
 ecg.toMerge <- c()
 for (i in 1:length(selected_ecg_files)) {
@@ -248,7 +265,8 @@ for (i in 1:length(selected_ecg_files)) {
   colnames(ecg.data) <- c("timestamp", "ecg", "ecg_mV")
   
   # Extract participant ID (from path position 6)
-  ecg.id <- strsplit(selected_ecg_files[i], "/")[[1]][6] %>% as.numeric()
+  #ecg.id <- strsplit(selected_ecg_files[i], "/")[[1]][6] %>% as.numeric()
+  ecg.id <- parse_pid_from_path(selected_ecg_files[i])
   
   # Get recording start & end timestamps
   ecg.start <- ecg.data$timestamp[1]
@@ -260,8 +278,8 @@ for (i in 1:length(selected_ecg_files)) {
     ECG.File      = selected_ecg_files[i],
     ECG.UTC.Start = ecg.start,
     ECG.UTC.Stop  = ecg.end,
-    ECG.Start.Clock.Original = as_datetime(ecg.start),
-    ECG.Stop.Clock.Original  = as_datetime(ecg.end),
+    ECG.Start.Clock.Original = to_posix(ecg.start),
+    ECG.Stop.Clock.Original  = to_posix(ecg.end),
     stringsAsFactors = FALSE
   )
   
@@ -269,67 +287,127 @@ for (i in 1:length(selected_ecg_files)) {
 }
 
 # Combine all ECG files into one dataframe
-ecg.merged.with.dupe <- subset(rbindlist(ecg.toMerge, id="participantID", use.names=FALSE), select=-1)
+#ecg.merged.with.dupe <- subset(rbindlist(ecg.toMerge, id="participantID", use.names=FALSE), select=-1)
+ecg.merged.with.dupe <- dplyr::bind_rows(ecg.toMerge)
+
+print(ecg.merged.with.dupe)
 
 ################################################################################################
-### Block 3: Process EDA Files ###
+### Block 3: Process EDA Files (robust to metadata rows and delimiters)
 ################################################################################################
 
-eda.toMerge <- c()
-for (k in 1:length(month.eda.list)) {
-  # Read EDA CSV
-  eda.data <- read.csv(month.eda.list[k], header = TRUE)
+# Helper to read one EDA file and return start/stop clock times
+read_eda_summary <- function(f) {
+  lines <- readLines(f, warn = FALSE, encoding = "UTF-8")
+  if (length(lines) == 0) {
+    warning("Empty file: ", f); return(NULL)
+  }
   
-  # Extract start & end clock times (drop milliseconds using substr)
-  eda.start <- substr(eda.data$TIMESTAMP[1], 1, 8)
-  eda.end   <- substr(eda.data$TIMESTAMP[length(eda.data$TIMESTAMP)], 1, 8)
+  # 1) Find the header row of the data block
+  #    Prefer a line that starts with SECOND (typical eSense export).
+  hdr_idx <- grep("^\\s*SECOND[;,\\t]", lines, perl = TRUE)
+  if (length(hdr_idx) == 0) {
+    # fallback: any line containing TIMESTAMP looks like a header
+    hdr_idx <- grep("TIMESTAMP", lines, fixed = TRUE)
+  }
+  if (length(hdr_idx) == 0) {
+    warning("No header row found in: ", f); return(NULL)
+  }
+  hdr_idx <- hdr_idx[1]
   
-  # Extract participant ID from filename (position 5, remove "_converted.csv")
-  eda.id <- gsub("_converted.csv", "", strsplit(month.eda.list[k], "/")[[1]][5]) %>% as.numeric()
+  # 2) Detect delimiter from the header line
+  hdr_line <- lines[hdr_idx]
+  sep <- if (grepl(";", hdr_line)) ";" else if (grepl(",", hdr_line)) "," else "\t"
   
-  # Create dataframe for this EDA file
-  eda.df <- data.frame(
-    participantID = eda.id,
-    EDA.File = month.eda.list[k],
-    EDA.Start.Clock.Original = eda.start,
-    EDA.Stop.Clock.Original  = eda.end,
+  # 3) Read the table beginning at the header
+  df <- tryCatch(
+    read.table(
+      f, header = TRUE, sep = sep, skip = hdr_idx - 1,
+      quote = "", comment.char = "", fill = TRUE, stringsAsFactors = FALSE
+    ),
+    error = function(e) { warning("Failed to read: ", f, " — ", e$message); NULL }
+  )
+  if (is.null(df) || !nrow(df)) return(NULL)
+  
+  # 4) Identify the timestamp column
+  ts_col <- intersect(c("TIMESTAMP", "Timestamp", "TIME", "Time"), names(df))
+  if (!length(ts_col)) { warning("No TIMESTAMP column in: ", f); return(NULL) }
+  ts <- as.character(df[[ts_col[1]]])
+  
+  # 5) Extract first & last non-empty timestamps; keep only HH:MM:SS
+  nz <- which(!is.na(ts) & nzchar(ts))
+  if (!length(nz)) { warning("No timestamp values in: ", f); return(NULL) }
+  start_raw <- ts[min(nz)]
+  stop_raw  <- ts[max(nz)]
+  
+  extract_hms <- function(x) {
+    m <- regmatches(x, regexpr("\\b\\d{2}:\\d{2}:\\d{2}\\b", x))
+    if (!length(m)) NA_character_ else m
+  }
+  eda_start <- extract_hms(start_raw)
+  eda_stop  <- extract_hms(stop_raw)
+  
+  # 6) PID from filename (your files are .../YYYYMMDD/41001.csv)
+  pid <- suppressWarnings(as.numeric(tools::file_path_sans_ext(basename(f))))
+  
+  data.frame(
+    participantID = pid,
+    EDA.File = f,
+    EDA.Start.Clock.Original = eda_start,
+    EDA.Stop.Clock.Original  = eda_stop,
     stringsAsFactors = FALSE
   )
-  
-  print(eda.df)  # check progress
-  
-  eda.toMerge <- c(eda.toMerge, list(eda.df))
 }
 
-# Combine all EDA files into one dataframe
-eda.merged <- subset(rbindlist(eda.toMerge, id="participantID", use.names=FALSE), select=-1)
+# Iterate over all day EDA files (vector of full paths)
+eda.list <- lapply(day_eda_excel_files, read_eda_summary)
+eda.list <- Filter(Negate(is.null), eda.list)
 
-# Quick cleaning: remove corrupted/misformatted timestamps
-eda.error  <- eda.merged %>% filter(nchar(EDA.Start.Clock.Original) != 8)
-eda.merged <- eda.merged %>% filter(nchar(EDA.Stop.Clock.Original) == 8)
+# Combine
+eda.merged <- dplyr::bind_rows(eda.list)
 
-################################################################################################
-### Block 4: Merge ECG + EDA + Mirage ###
-################################################################################################
+# Quick diagnostics and cleaning
+eda.error  <- eda.merged %>%
+  dplyr::filter(is.na(EDA.Start.Clock.Original) | is.na(EDA.Stop.Clock.Original))
 
-# First merge ECG + EDA
-ecg.eda <- merge(ecg.merged.with.dupe, eda.merged,
-                 by = "participantID", all = TRUE, sort = FALSE)
+# (Optionally keep only rows with valid HH:MM:SS)
+eda.merged <- eda.merged %>%
+  dplyr::filter(!is.na(EDA.Start.Clock.Original) & !is.na(EDA.Stop.Clock.Original))
 
-# Then merge with Mirage
-ans.mirage <- merge(ecg.eda, mirage.correct,
-                    by = "participantID", all = TRUE, sort = FALSE)
+# Peek
+cat("\n--------------- EDA Summary ---------------\n")
+cat("Total EDA files read: ", length(day_eda_excel_files), "\n")
+cat("Merged rows: ", nrow(eda.merged), "\n")
+if (nrow(eda.error)) {
+  cat("Rows with missing/invalid times: ", nrow(eda.error), "\n")
+  print(eda.error)
+}
+print(eda.merged)
+cat("-------------------------------------------\n")
 
-################################################################################################
-### Block 5: Identify Missing Data ###
-################################################################################################
 
-missing.mirage <- ans.mirage %>% filter(is.na(Mirage.Start.UTC))
-missing.ecg    <- ans.mirage %>% filter(is.na(ECG.File))
-missing.eda    <- ans.mirage %>% filter(is.na(EDA.File))
-
-# Complete cases (all three present)
-complete.ans.mirage <- ans.mirage %>%
-  filter(!is.na(Mirage.Start.UTC) & !is.na(ECG.File) & !is.na(EDA.File))
-
-################################################################################################
+# ################################################################################################
+# ### Block 4: Merge ECG + EDA + Mirage ###
+# ################################################################################################
+# 
+# # First merge ECG + EDA
+# ecg.eda <- merge(ecg.merged.with.dupe, eda.merged,
+#                  by = "participantID", all = TRUE, sort = FALSE)
+# 
+# # Then merge with Mirage
+# ans.mirage <- merge(ecg.eda, mirage.correct,
+#                     by = "participantID", all = TRUE, sort = FALSE)
+# 
+# ################################################################################################
+# ### Block 5: Identify Missing Data ###
+# ################################################################################################
+# 
+# missing.mirage <- ans.mirage %>% filter(is.na(Mirage.Start.UTC))
+# missing.ecg    <- ans.mirage %>% filter(is.na(ECG.File))
+# missing.eda    <- ans.mirage %>% filter(is.na(EDA.File))
+# 
+# # Complete cases (all three present)
+# complete.ans.mirage <- ans.mirage %>%
+#   filter(!is.na(Mirage.Start.UTC) & !is.na(ECG.File) & !is.na(EDA.File))
+# 
+# ################################################################################################
