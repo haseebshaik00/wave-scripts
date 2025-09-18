@@ -8,3 +8,5 @@ data/
 output/
 .DS_Store
 Thumbs.db
+R/box-path.R
+scripts/Recruitment/All Recruitment Dates.xslx
