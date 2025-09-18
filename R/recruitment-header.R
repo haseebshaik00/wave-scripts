@@ -4,10 +4,7 @@ library(purrr)
 library(tidyr)
 library(data.table)
 
-# ----------------------------
-# Define base Box path
-# ----------------------------
-BOX_PATH <- "C:/Users/hshaik00/Box/Bangladesh Study/Data"
+source("R/box-path.R")
 
 # Build sub-paths for each data type
 ECG_ROOT    <- file.path(BOX_PATH, "Firstbeat Bodyguard 3 data/Wave 1 data/1. Recruitment Pregnant Women")

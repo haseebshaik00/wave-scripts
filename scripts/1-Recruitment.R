@@ -2,7 +2,7 @@
 # --------------- Step 1 - Include header file - which has access to raw data ---------------
 # This stores raw data paths into variables mentioned below
 
-source("R/header.R")
+source("R/recruitment-header.R")
 
 # Below are the variables that has raw data's info
 # mirage_folders has access to all mirage excel files whereas
@@ -22,6 +22,7 @@ print(head(mirage_folders))
 cat("-----------------------------------------\n")
 
 # --------------- Step - 2: Filter ECG excel files ---------------
+# Issue #2: After confirmation will change this to --> ECG start time closest to Mirage time filtering idea
 cat("\n --- [Processing] ECG Files Filtering ---------------\n")
 
 # Function to get the largest ECG file (pref 2–10 MB, fallback largest overall)
@@ -37,7 +38,8 @@ get_largest_ecg_file <- function(pid_folder) {
   # Get file sizes in bytes
   file_sizes <- file.info(files)$size
   
-  # Define MB range
+  # [CHANGE] - These [CHANGE] tags can be changed according to your convenience!
+  # Define MB range - ECG File Size
   min_size <- 2 * 1024 * 1024   # 2 MB
   max_size <- 10 * 1024 * 1024  # 10 MB
   
@@ -52,12 +54,6 @@ get_largest_ecg_file <- function(pid_folder) {
     return(files[which.max(file_sizes)])
   }
 }
-
-# # Apply to all PID subfolders from the chosen date
-# selected_ecg_files <- lapply(month_ecg_subfolders, get_largest_ecg_file)
-# selected_ecg_files <- unlist(selected_ecg_files, use.names = FALSE)
-# # Drop missing (NA) entries
-# selected_ecg_files <- Filter(Negate(is.na), selected_ecg_files)
 
 selected_ecg_files <- sapply(day_ecg_subfolders, get_largest_ecg_file, USE.NAMES = FALSE)
 selected_ecg_files <- selected_ecg_files[!is.na(selected_ecg_files)]
@@ -84,19 +80,13 @@ mirage.long <- mirage.merged %>%
   filter(day(ymd_hms(jotDateTime)) == search.day.num) %>%     # <-- new day filter
   select(participantID, marker, UTC, jotDateTime)
 
-
 # ---- Clean participant IDs (remove "PID" prefix, make numeric) ----
 mirage.long$participantID <- gsub("PID", "", mirage.long$participantID) %>% as.numeric()
-
-# ---- Create unique PID list (Reliability log) ----
-unique.id <- mirage.long %>%
-  distinct(participantID, .keep_all = TRUE) %>%
-  arrange(participantID)
 
 cat("--------------- Output #3 ---------------\n")
 cat("Mirage Data Found =", nrow(mirage.long), "\n")
 print(head(mirage.long))
-cat("Realibility Logs PIDs List =", nrow(unique.id), "\n")
+cat("Unique PIDs List in Mirage =", nrow(unique.id), "\n")
 print(head(unique.id))
 cat("-----------------------------------------\n")
 
@@ -168,6 +158,7 @@ cat("Toal Clean Mirage sessions = ", nrow(mirage.correct), "\n")
 print(mirage.correct)
 cat("-----------------------------------------\n")
 
+# You can ignore [DEBUG] code blocks!
 # # --------------- [Debug] Mirage Data Not Available (check raw Excel files) ---------------
 # cat("\n --- [Processing] Mirage Data Not Available Check (vs raw Excel files) ---------------\n")
 # 
@@ -223,7 +214,8 @@ cat("-----------------------------------------\n")
 # cat("-----------------------------------------------\n")
 
 
-# --------------- Step - 5: ANS (Autonomic Nervous System) merging pipeline ---------------
+
+# --------------- Step - 5: ANS (Autonomic Nervous System) merging pipeline (Total 5 blocks) ---------------
 ################################################################################################
 ### Block 1: Prepare Mirage Data (already filtered + cleaned earlier) ###
 ################################################################################################
@@ -242,7 +234,6 @@ mirage.correct <- mirage.correct %>%
 ### Block 2: Process ECG Files ###
 ################################################################################################
 cat("\n --- [Processing] ECG Files Processing ---------------\n")
-
 # Extract 5-digit PID folder (works with / or \ on Windows)
 extract_pid <- function(path) {
   pid <- stringr::str_extract(path, "(?<=/|\\\\)\\d{5}(?=/|\\\\)")
@@ -317,8 +308,7 @@ summarize_ecg_file <- function(fp) {
   })
 }
 
-# Build index -----------------------------------------------------------
-
+# Build ECG index -----------------------------------------------------------
 ecg.index <- selected_ecg_files |>
   lapply(summarize_ecg_file) |>
   dplyr::bind_rows() |>
@@ -329,7 +319,6 @@ cat("--------------- Output #5.1 - ECG Data ---------------\n")
 cat("Total ECG files processed =", nrow(ecg.index), "\n")
 cat("With read errors =", sum(!is.na(ecg.index$.error)), "\n")
 print(ecg.index)
-
 
 # Optional: list problematic files
 ecg.errors <- ecg.index %>%
@@ -344,11 +333,6 @@ ecg.index <- ecg.index %>%
 cat("Total ECG files with errors [Review] =", nrow(ecg.errors), "\n")
 print(ecg.errors)
 cat("-----------------------------------------\n")
-# Optional: join with mirage.correct on PID when you’re ready
-# (mirage.correct already has participantID as numeric)
-#ans.keys <- dplyr::inner_join(mirage.correct, ecg.index, by = "participantID")
-
-#cat("Merged Mirage×ECG rows =", nrow(ans.keys), "\n")
 
 ################################################################################################
 ### Block 3: Process EDA Files (robust to metadata rows and delimiters)
@@ -484,4 +468,255 @@ missing_mirage <- tibble(participantID = missing_mirage_ids) %>%
 View(missing_ecg)
 View(missing_eda)
 View(missing_mirage)
+# -------------------------------------------
 
+# --------------- Step - 6: Baseline Event-Window Math (Total 8 blocks) ---------------
+
+# If your inner-join result is empty (e.g., 2023-03-11), this section will no-op gracefully
+# The final data is stored in complete.ans.mirage variable!
+complete.ans.mirage <- ans.mirage
+
+# ----------------------------
+# Baseline event-window math
+# ----------------------------
+
+# If your inner-join result is empty (e.g., 2023-03-11), this section will no-op gracefully
+complete.ans.mirage <- ans.mirage
+
+# Helper for file name label (avoids relying on search.month)
+search_date_label <- sprintf("%04d-%02d-%02d", search.year.num, search.month.num, search.day.num)
+
+if (nrow(complete.ans.mirage) > 0) {
+  
+  # ----------------------------
+  # Block A — Add base durations & dates (UTC)
+  # ----------------------------
+  addDuration.ECGMirage <- complete.ans.mirage %>%
+    mutate(
+      ECG.Date    = as.Date(ECG.Start.Clock.Original,  tz = "UTC"),
+      Mirage.Date = as.Date(Mirage.Start.Clock.Original, tz = "UTC"),
+      
+      ECG.Duration.Original    = as.numeric(difftime(ECG.Stop.Clock.Original,    ECG.Start.Clock.Original,    units = "mins")),
+      Mirage.Duration.Original = as.numeric(difftime(Mirage.Stop.Clock.Original, Mirage.Start.Clock.Original, units = "mins")),
+      ECG2Mirage.Duration.Original = as.numeric(difftime(Mirage.Start.Clock.Original, ECG.Start.Clock.Original, units = "mins"))
+    )
+  
+  # ----------------------------
+  # Block B — Bring EDA to UTC (EDA is local Dhaka time ≈ UTC+6)
+  # Use ECG.Date to attach the date to EDA HH:MM:SS
+  # ----------------------------
+  adjust.eda <- addDuration.ECGMirage %>%
+    mutate(
+      EDA.Start.Clock.Adjusted = lubridate::ymd_hms(paste(ECG.Date, EDA.Start.Clock.Original), tz = "UTC") - hours(6),
+      EDA.Stop.Clock.Adjusted  = lubridate::ymd_hms(paste(ECG.Date, EDA.Stop.Clock.Original),  tz = "UTC") - hours(6)
+    ) %>%
+    # Safety: if EDA stop rolled past midnight (stop < start), add 1 day to stop
+    mutate(
+      EDA.Stop.Clock.Adjusted = ifelse(
+        EDA.Stop.Clock.Adjusted < EDA.Start.Clock.Adjusted,
+        EDA.Stop.Clock.Adjusted + days(1),
+        EDA.Stop.Clock.Adjusted
+      ) %>% as.POSIXct(origin = "1970-01-01", tz = "UTC")
+    )
+  
+  addDuration.eda <- adjust.eda %>%
+    mutate(
+      EDA.Duration.Original          = as.numeric(difftime(EDA.Stop.Clock.Adjusted, EDA.Start.Clock.Adjusted, units = "mins")),
+      EDA2Mirage.Duration.Original   = round(as.numeric(difftime(Mirage.Start.Clock.Original, EDA.Start.Clock.Adjusted, units = "mins")), 1),
+      Mirage2EDA.Duration.Original   = round(as.numeric(difftime(EDA.Stop.Clock.Adjusted,   Mirage.Stop.Clock.Original,  units = "mins")), 1)
+    )
+  
+  # Keep rows where ECG/MIRAGE are same calendar date (typical baseline day)
+  ANSMIR.clean <- addDuration.eda %>% filter(ECG.Date == Mirage.Date)
+  
+  # ----------------------------
+  # Block C — Compute baseline window (MW) start/stop in seconds
+  # relative to each file’s start
+  # ----------------------------
+  calc.MWStart <- ANSMIR.clean %>% mutate(
+    ECG.MWStart.Original = as.numeric(difftime(Mirage.Start.Clock.Original, ECG.Start.Clock.Original,  units = "secs")),
+    EDA.MWStart.Original = as.numeric(difftime(Mirage.Start.Clock.Original, EDA.Start.Clock.Adjusted, units = "secs"))
+  )
+  
+  calc.MWStop <- calc.MWStart %>%
+    mutate(
+      ECG.MWStop.Original = ECG.MWStart.Original + (Mirage.Duration.Original * 60),
+      EDA.MWStop.Original = EDA.MWStart.Original + (Mirage.Duration.Original * 60)
+    )
+  
+  # ----------------------------
+  # Block D — Fix ECG that’s off by 6h (timezone mis-tag)
+  # If Mirage appears to start "before" the ECG started (negative MW), shift ECG -6h
+  # ----------------------------
+  adjust.ecg <- calc.MWStop %>%
+    mutate(
+      ECG.Start.Clock.Adjusted = dplyr::case_when(
+        ECG.MWStart.Original < 0 ~ lubridate::ymd_hms(ECG.Start.Clock.Original) - hours(6),
+        TRUE                     ~ ECG.Start.Clock.Original
+      ),
+      ECG.Stop.Clock.Adjusted = dplyr::case_when(
+        ECG.MWStop.Original < 0 ~ lubridate::ymd_hms(ECG.Stop.Clock.Original) - hours(6),
+        TRUE                    ~ ECG.Stop.Clock.Original
+      )
+    )
+  
+  # ----------------------------
+  # Block E — Nudge MIRAGE by 30 min (or 1 min) when it’s slightly ahead of EDA
+  # Uses Mirage2EDA (EDA.stop - MIRAGE.stop); negative means MIRAGE stops later
+  # ----------------------------
+  adjust.mirage <- adjust.ecg %>%
+    mutate(
+      Mirage.Start.Clock.Adjusted = dplyr::case_when(
+        dplyr::between(Mirage2EDA.Duration.Original, -30.01, -1.01) ~ lubridate::ymd_hms(Mirage.Start.Clock.Original) - minutes(30),
+        dplyr::between(Mirage2EDA.Duration.Original,  -1.00, -0.02) ~ lubridate::ymd_hms(Mirage.Start.Clock.Original) - minutes(1),
+        TRUE ~ Mirage.Start.Clock.Original
+      ),
+      Mirage.Stop.Clock.Adjusted = dplyr::case_when(
+        dplyr::between(Mirage2EDA.Duration.Original, -30.01, -1.01) ~ lubridate::ymd_hms(Mirage.Stop.Clock.Original) - minutes(30),
+        dplyr::between(Mirage2EDA.Duration.Original,  -1.00, -0.02) ~ lubridate::ymd_hms(Mirage.Stop.Clock.Original) - minutes(1),
+        TRUE ~ Mirage.Stop.Clock.Original
+      )
+    )
+  
+  # ----------------------------
+  # Block F — Recompute everything after adjustments
+  # ----------------------------
+  recalc.MWStart <- adjust.mirage %>%
+    mutate(
+      ECG.MWStart.Adjusted = as.numeric(difftime(Mirage.Start.Clock.Adjusted, ECG.Start.Clock.Adjusted, units = "secs")),
+      EDA.MWStart.Adjusted = as.numeric(difftime(Mirage.Start.Clock.Adjusted, EDA.Start.Clock.Adjusted, units = "secs")),
+      
+      ECG.Duration.Adjusted    = as.numeric(difftime(ECG.Stop.Clock.Adjusted,    ECG.Start.Clock.Adjusted,    units = "mins")),
+      EDA.Duration.Adjusted    = as.numeric(difftime(EDA.Stop.Clock.Adjusted,    EDA.Start.Clock.Adjusted,    units = "mins")),
+      Mirage.Duration.Adjusted = as.numeric(difftime(Mirage.Stop.Clock.Adjusted, Mirage.Start.Clock.Adjusted, units = "mins")),
+      
+      ECG2Mirage.Duration.Adjusted = as.numeric(difftime(Mirage.Start.Clock.Adjusted, ECG.Start.Clock.Adjusted, units = "mins")),
+      EDA2Mirage.Duration.Adjusted = as.numeric(difftime(Mirage.Start.Clock.Adjusted, EDA.Start.Clock.Adjusted, units = "mins")),
+      Mirage2EDA.Duration.Adjusted = as.numeric(difftime(Mirage.Stop.Clock.Adjusted,  EDA.Stop.Clock.Adjusted,  units = "mins"))
+    )
+  
+  recalc.MWStop <- recalc.MWStart %>%
+    mutate(
+      ECG.MWStop.Adjusted = ECG.MWStart.Adjusted + (Mirage.Duration.Adjusted * 60),
+      EDA.MWStop.Adjusted = EDA.MWStart.Adjusted + (Mirage.Duration.Adjusted * 60)
+    )
+  
+  # ----------------------------
+  # Block G — QC filters (duration & proximity sanity checks)
+  # ----------------------------
+  recalc.clean <- recalc.MWStop %>%
+    filter(
+      ECG.Duration.Adjusted > 8, ECG.Duration.Adjusted < 60,
+      ECG2Mirage.Duration.Adjusted < 120
+    ) %>%
+    select(-ECG.Date)
+  
+  recalc.clean <- recalc.clean %>%
+    mutate(
+      ECG.MWStart.Adjusted = round(ECG.MWStart.Adjusted, 3),
+      ECG.MWStop.Adjusted  = round(ECG.MWStop.Adjusted,  3),
+      EDA.MWStart.Adjusted = round(EDA.MWStart.Adjusted, 3),
+      EDA.MWStop.Adjusted  = round(EDA.MWStop.Adjusted,  3)
+    )
+  
+  # NOTE on -30.02: keep as-is if you still want to allow up to a 30-min MIRAGE–EDA stop offset.
+  # Tighten to -1 if you only want ~clock-second misalignments.
+  MWTimes.adjusted <- recalc.clean %>%
+    select(
+      Mirage.Date, participantID,
+      ECG.MWStart.Adjusted, ECG.MWStop.Adjusted,
+      EDA.MWStart.Adjusted, EDA.MWStop.Adjusted,
+      ECG.Start.Clock.Adjusted, EDA.Start.Clock.Adjusted, Mirage.Start.Clock.Adjusted, Mirage.Stop.Clock.Adjusted,
+      EDA.Stop.Clock.Adjusted,  ECG.Stop.Clock.Adjusted,
+      ECG.Duration.Adjusted, EDA.Duration.Adjusted, Mirage.Duration.Adjusted,
+      ECG2Mirage.Duration.Adjusted, EDA2Mirage.Duration.Adjusted, Mirage2EDA.Duration.Adjusted,
+      ECG.File, EDA.File
+    ) %>%
+    filter(
+      ECG.MWStart.Adjusted > 0, ECG.MWStop.Adjusted > 0,
+      EDA.MWStart.Adjusted > 0, EDA.MWStop.Adjusted > 0,
+      Mirage2EDA.Duration.Adjusted > -30.02, Mirage2EDA.Duration.Adjusted < 10
+    )
+  
+  MWTimes.original <- recalc.MWStop %>%
+    select(
+      Mirage.Date, participantID,
+      ECG.MWStart.Original, ECG.MWStop.Original,
+      EDA.MWStart.Original, EDA.MWStop.Original,
+      ECG.Start.Clock.Original, EDA.Start.Clock.Original, Mirage.Start.Clock.Original, Mirage.Stop.Clock.Original,
+      EDA.Stop.Clock.Original,  ECG.Stop.Clock.Original,
+      Mirage.Start.UTC, Mirage.Stop.UTC,
+      ECG.Duration.Original, EDA.Duration.Original, Mirage.Duration.Original,
+      ECG2Mirage.Duration.Original, EDA2Mirage.Duration.Original, Mirage2EDA.Duration.Original,
+      ECG.File, EDA.File
+    ) %>%
+    mutate(
+      ECG.MWStart.Original = round(ECG.MWStart.Original, 3),
+      ECG.MWStop.Original  = round(ECG.MWStop.Original,  3),
+      EDA.MWStart.Original = round(EDA.MWStart.Original, 3),
+      EDA.MWStop.Original  = round(EDA.MWStop.Original,  3)
+    )
+  
+  MWTimes.review <- recalc.clean %>%
+    select(
+      Mirage.Date, participantID,
+      ECG.MWStart.Adjusted, ECG.MWStop.Adjusted,
+      EDA.MWStart.Adjusted, EDA.MWStop.Adjusted,
+      ECG.Start.Clock.Adjusted, EDA.Start.Clock.Adjusted, Mirage.Start.Clock.Adjusted, Mirage.Stop.Clock.Adjusted,
+      EDA.Stop.Clock.Adjusted,  ECG.Stop.Clock.Adjusted,
+      ECG.Duration.Adjusted, EDA.Duration.Adjusted, Mirage.Duration.Adjusted,
+      ECG2Mirage.Duration.Adjusted, EDA2Mirage.Duration.Adjusted, Mirage2EDA.Duration.Adjusted,
+      ECG.File, EDA.File
+    ) %>%
+    filter(
+      ECG.MWStart.Adjusted < 0 | ECG.MWStop.Adjusted < 0 |
+        EDA.MWStart.Adjusted < 0 | EDA.MWStop.Adjusted < 0 |
+        Mirage2EDA.Duration.Adjusted < -30.02 | Mirage2EDA.Duration.Adjusted > 10
+    )
+  
+  colnames(MWTimes.review) <- c(
+    "Mirage.Date","participantID",
+    "ECG.MWStart.Review","ECG.MWStop.Review",
+    "EDA.MWStart.Review","EDA.MWStop.Review",
+    "ECG.Start.Clock.Review","EDA.Start.Clock.Review","Mirage.Start.Clock.Review","Mirage.Stop.Clock.Review",
+    "EDA.Stop.Clock.Review","ECG.Stop.Clock.Review",
+    "ECG.Duration.Review","EDA.Duration.Review","Mirage.Duration.Review",
+    "ECG2Mirage.Duration.Review","EDA2Mirage.Duration.Review","Mirage2EDA.Duration.Review",
+    "ECG.File","EDA.File"
+  )
+  
+} else {
+  # If no complete triads, create empty frames for the export
+  MWTimes.adjusted <- MWTimes.original <- MWTimes.review <- complete.ans.mirage
+}
+
+# ----------------------------
+# Block H — Export workbook
+# ----------------------------
+export.list <- list(
+  "Adjusted"                      = MWTimes.adjusted,
+  "Needs Review"                  = MWTimes.review,
+  "Original"                      = MWTimes.original,
+  "Duplicate or Missing Mirage" = mirage.issue,
+  "Mirage does not exist"         = missing_mirage,
+  "EDA file does not exist"       = missing_eda,
+  "ECG file does not exist"       = missing_ecg
+)
+
+# ensure the folder exists
+dir.create(file.path("output", "Recruitment"), recursive = TRUE, showWarnings = FALSE)
+
+# build the full output path
+out_path <- file.path(
+  "output", "Recruitment",
+  paste0(search_date_label, " MW Baseline Event Marker Times ", Sys.Date(), ".xlsx")
+)
+
+# write the file
+openxlsx::write.xlsx(
+  export.list,
+  file = out_path,
+  overwrite = TRUE
+)
+
+cat("File written to:", normalizePath(out_path), "\n")
