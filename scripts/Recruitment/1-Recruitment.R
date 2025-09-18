@@ -703,12 +703,17 @@ export.list <- list(
   "ECG file does not exist"       = missing_ecg
 )
 
-# ensure the folder exists
-dir.create(file.path("output", "Recruitment"), recursive = TRUE, showWarnings = FALSE)
+# Build nice labels from the chosen date
+search_date        <- lubridate::make_date(search.year.num, search.month.num, search.day.num)
+search_date_label  <- format(search_date, "%Y-%m-%d")   # e.g., "2023-03-11"
+month_year_label   <- format(search_date, "%B %Y")      # e.g., "March 2023"
 
-# build the full output path
+# ensure the Month Year folder exists: output/Recruitment/March 2023/
+dir.create(file.path("output", "Recruitment", month_year_label), recursive = TRUE, showWarnings = FALSE)
+
+# build the full output path (file still includes the precise selected date)
 out_path <- file.path(
-  "output", "Recruitment",
+  "output", "Recruitment", month_year_label,
   paste0(search_date_label, " MW Baseline Event Marker Times ", Sys.Date(), ".xlsx")
 )
 
@@ -720,3 +725,4 @@ openxlsx::write.xlsx(
 )
 
 cat("File written to:", normalizePath(out_path), "\n")
+
