@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MIRAGE Marker Browser</title>
+
+  <!-- Local-only parsers (no server) -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>MIRAGE Marker Browser</h1>
+    <p class="sub">Load MIRAGE CSV/XLSX files, pick a date & marker, and browse rows grouped by PID.</p>
+  </header>
+
+  <main class="container">
+    <!-- File Loader -->
+    <section class="loader">
+      <label class="file-drop" id="dropZone">
+        <input id="fileInput" type="file" multiple accept=".csv,.xlsx,.xls" />
+        <strong>Drop MIRAGE files here</strong>
+        <span>or click to select CSV/XLSX files</span>
+      </label>
+      <div class="tips">
+        <ul>
+          <li>All parsing happens locally in your browser.</li>
+          <li>Supports both CSV and Excel workbooks.</li>
+          <li>We auto-detect <em>participantID</em>, <em>marker</em>, and time fields.</li>
+        </ul>
+      </div>
+      <div class="stats" id="stats">No files loaded yet.</div>
+    </section>
+
+    <!-- Filters -->
+    <section class="filters card">
+      <div class="row">
+        <div class="control">
+          <label for="yearSelect">Year</label>
+          <select id="yearSelect"></select>
+        </div>
+        <div class="control">
+          <label for="monthSelect">Month</label>
+          <select id="monthSelect"></select>
+        </div>
+        <div class="control">
+          <label for="daySelect">Day</label>
+          <select id="daySelect"></select>
+        </div>
+        <div class="control wide">
+          <label for="markerSelect">Marker</label>
+          <select id="markerSelect">
+            <option value="baseline">Baseline_start/stop</option>
+            <option value="play">Play_start/stop</option>
+            <option value="interrupted_children">Interrupted by children</option>
+            <option value="interrupted_adults">Interrupted by adults</option>
+            <option value="didnt_follow">Participant didn’t follow directions</option>
+            <option value="electrodes">Electrode devices disconnected</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="control">
+          <button id="clearBtn" class="btn">Clear</button>
+        </div>
+      </div>
+      <div class="hint">
+        Filters use <strong>jotDateTime</strong> (date part). “Baseline/Play” show only PIDs that have only that family on the chosen day.
+      </div>
+    </section>
+
+    <!-- Results -->
+    <section class="results card">
+      <div class="results-head">
+        <div id="resultMeta">0 PID(s) • 0 row(s)</div>
+      </div>
+      <div id="results"></div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span>Minimal UI • pastel palette</span>
+  </footer>
+
+  <!-- If you prebundle, include mirage-bundle.js before main.js -->
+  <!-- <script src="mirage-bundle.js"></script> -->
+  <script src="main.js"></script>
+</body>
+</html>
