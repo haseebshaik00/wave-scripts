@@ -471,6 +471,15 @@ els.year.addEventListener('change', () => { refreshMonthOptions(); render(); });
 els.month.addEventListener('change', () => { refreshDayOptions(); render(); });
 els.day.addEventListener('change', render);
 els.marker.addEventListener('change', render);
+els.clearBtn.addEventListener('click', () => {
+  els.year.value = '';
+  els.month.value = '';
+  els.day.value = '';
+  els.marker.value = 'baseline';   // reset to Baseline Start/Stop
+  refreshMonthOptions();
+  refreshDayOptions();
+  render();
+});
 
 // ---------- prebundle boot (optional, if mirage-bundle.js present)
 if (window.MIRAGE_BUNDLE && Array.isArray(window.MIRAGE_BUNDLE)) {

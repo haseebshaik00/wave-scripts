@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MIRAGE Marker Filter App | HERD LAB</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="./assets/herd-lab-logo.png">
+  <title>MIRAGE Marker Filter Application | HERD LAB</title>
 
   <!-- Local-only parsers (no server) -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -11,8 +13,13 @@
 
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <header class="app-header">
+    <a class="brand" href="https://herdlab.faculty.ucdavis.edu/" target="_blank" rel="noopener">
+      <img src="./assets/herd-lab-logo.png" alt="HERD LAB" />
+    </a>
+
     <h1>MIRAGE Marker Filter Application</h1>
     <p class="sub">Load MIRAGE xlsx/csv files, pick a date & marker, and browse rows grouped by PID!</p>
   </header>
@@ -28,7 +35,8 @@
       <div class="tips">
         <ul>
           <li>Supports both CSV and Excel workbooks and all parsing happens locally in the browser.</li>
-          <li>Don't worry we got you covered: We auto-detect <em>participantID</em>, <em>marker</em>, and time fields.</li>
+          <li>Don't worry we got you covered: We auto-detect <em>participantID</em>, <em>marker</em>, and time fields.
+          </li>
           <li>You can upload more than one file! <em>[Both Mirage by Month & Actual Mirage Files are allowed]</em></li>
         </ul>
       </div>
@@ -67,7 +75,7 @@
         </div>
       </div>
       <div class="hint">
-        Filters are based on <strong>jotDateTime</strong>! 
+        Year, Month and Day filters are based on <strong>jotDateTime</strong>!
         <br>“Baseline/Play” event markers show only PIDs that have only that family on the chosen day.
         <br>Finally, for <em>other</em> markers only faulty rows are displayed to maintain a seamless user experience.
       </div>
@@ -90,4 +98,5 @@
   <!-- <script src="mirage-bundle.js"></script> -->
   <script src="main.js"></script>
 </body>
+
 </html>

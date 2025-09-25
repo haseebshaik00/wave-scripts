@@ -21,11 +21,14 @@ body{
   font-family:var(--sans);
   color:var(--ink);
   background:
-    radial-gradient(900px 600px at 10% -10%, var(--brand-2), transparent 60%),
-    radial-gradient(900px 600px at 110% 10%, var(--brand-3), transparent 60%),
-    radial-gradient(900px 600px at 40% 120%, var(--brand-4), transparent 60%),
+    radial-gradient(1200px 800px at -10% -20%, var(--brand-2) 0%, transparent 85%),
+    radial-gradient(1200px 800px at 120% 0%,  var(--brand-3) 0%, transparent 85%),
+    radial-gradient(1200px 800px at 50% 130%, var(--brand-4) 0%, transparent 85%),
     var(--bg);
+  background-repeat: no-repeat;
+  background-attachment: fixed; /* helps keep the blend smooth while scrolling */
 }
+
 
 .app-header{
   padding:28px 16px 8px;
@@ -33,6 +36,21 @@ body{
 }
 .app-header h1{margin:0 0 6px 0; font-weight:700; letter-spacing:.2px}
 .app-header .sub{margin:0; color:var(--muted)}
+
+/* Brand logo pinned top-left without disturbing centered title */
+.app-header { position: relative; }
+.app-header .brand {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  display: inline-block;
+  line-height: 0;
+}
+.app-header .brand img {
+  height: 80px;
+  width: auto;
+  border-radius: 8px;
+}
 
 .container{
   max-width:1100px;
