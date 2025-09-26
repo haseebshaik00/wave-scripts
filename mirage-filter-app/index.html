@@ -22,6 +22,11 @@
 
     <h1>MIRAGE Marker Filter Application</h1>
     <p class="sub">Load MIRAGE xlsx/csv files, pick a date & marker, and browse rows grouped by PID!</p>
+    <!-- top-right actions (hidden on mobile via CSS) -->
+    <div class="header-actions">
+      <div class="copyright">&copy; HERD Lab, 2025</div>
+      <a class="contact-btn" href="https://herdlab.faculty.ucdavis.edu/contacts/" target="_blank" rel="noopener" onclick="this.blur()">Contact Us</a>
+    </div>
   </header>
 
   <main class="container">
@@ -47,6 +52,11 @@
     <section class="filters card">
       <div class="row">
         <div class="control">
+          <label for="pidSelect"><b>PID</b></label>
+          <select id="pidSelect"></select>
+        </div>
+
+        <div class="control">
           <label for="yearSelect"><b>Year</b></label>
           <select id="yearSelect"></select>
         </div>
@@ -65,8 +75,8 @@
             <option value="play">Play Start/Stop</option>
             <option value="interrupted_children">Interrupted By Children</option>
             <option value="interrupted_adults">Interrupted By Adults</option>
-            <option value="didnt_follow">Participant didn’t follow directions!</option>
-            <option value="electrodes">Electrode devices disconnected!</option>
+            <option value="didnt_follow">Participant didn’t follow directions</option>
+            <option value="electrodes">Electrode devices disconnected</option>
             <option value="other">Others</option>
           </select>
         </div>
@@ -75,10 +85,13 @@
         </div>
       </div>
       <div class="hint">
-        Year, Month and Day filters are based on <strong>jotDateTime</strong>!
-        <br>“Baseline/Play” event markers show only PIDs that have only that family on the chosen day.
-        <br>Finally, for <em>other</em> markers only faulty rows are displayed to maintain a seamless user experience.
+        <ul class="bullets">
+          <li>Year, Month and Day filters are based on <strong>jotDateTime</strong>!</li>
+          <li>“Baseline/Play” event markers show PIDs that have only that family on the chosen day.</li>
+          <li>Finally, for other markers, all rows for that PID are shown.</li>
+        </ul>
       </div>
+
     </section>
 
     <!-- Results -->

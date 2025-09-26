@@ -5,10 +5,11 @@
  */
 
 const state = {
-  rows: [], // normalized rows
+  rows: [],
   years: new Set(),
-  monthsByYear: new Map(),     // year -> Set(month)
-  daysByYearMonth: new Map(),  // `${year}-${mm}` -> Set(day)
+  monthsByYear: new Map(),
+  daysByYearMonth: new Map(),
+  pids: new Set(),                
 };
 
 const els = {
@@ -22,6 +23,7 @@ const els = {
   clearBtn:   document.getElementById('clearBtn'),
   results:    document.getElementById('results'),
   resultMeta: document.getElementById('resultMeta'),
+  pid:        document.getElementById('pidSelect'),   
 };
 
 // ---------- small utils
@@ -162,8 +164,13 @@ function buildCalendarIndexes(rows) {
   state.years.clear();
   state.monthsByYear.clear();
   state.daysByYearMonth.clear();
+  state.pids.clear();
 
   for (const r of rows) {
+    // collect PIDs for the PID filter
+    const key = r.pid || r.accessCode || 'UNKNOWN';
+    if (key) state.pids.add(key);
+
     if (!r.pKey) continue;
     state.years.add(r.pY);
 
@@ -175,6 +182,42 @@ function buildCalendarIndexes(rows) {
     state.daysByYearMonth.get(ym).add(r.pD);
   }
 }
+
+function fillPidSelect() {
+  els.pid.innerHTML = `<option value="">All</option>` +
+    Array.from(state.pids).sort()
+      .map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`)
+      .join('');
+}
+
+// Build PID options for the currently selected Year/Month/Day (ignores marker)
+function fillPidSelectForDate() {
+  const y = els.year.value, m = els.month.value, d = els.day.value;
+
+  // collect PIDs that have rows on the selected date scope
+  const pidSet = new Set();
+  for (const r of state.rows) {
+    if (!r.pKey) continue;
+    if (y && r.pY !== y) continue;
+    if (m && r.pM !== m) continue;
+    if (d && r.pD !== d) continue;
+    pidSet.add(r.pid || r.accessCode || 'UNKNOWN');
+  }
+
+  const options = Array.from(pidSet).sort();
+  const prev = els.pid.value;
+
+  els.pid.innerHTML = `<option value="">All</option>` +
+    options.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+
+  // keep selection if still valid, otherwise reset to All
+  if (prev && options.includes(prev)) {
+    els.pid.value = prev;
+  } else {
+    els.pid.value = '';
+  }
+}
+
 
 function fillYearMonthDaySelects() {
   els.year.innerHTML = `<option value="">All</option>` +
@@ -259,6 +302,7 @@ function uniquePairsWithOrphans(arr) {
 function render() {
   const y = els.year.value, m = els.month.value, d = els.day.value;
   const markerSel = els.marker.value;
+  const pidSel = els.pid.value;
 
   // Filter by primary (jot) date fields
   let base = state.rows.filter(r => {
@@ -266,18 +310,21 @@ function render() {
     if (y && r.pY !== y) return false;
     if (m && r.pM !== m) return false;
     if (d && r.pD !== d) return false;
+    if (pidSel) {
+      const grp = r.pid || r.accessCode || 'UNKNOWN';
+      if (grp !== pidSel) return false;
+    }
     return true;
   });
 
   // Marker family filtering
   if (markerSel === 'baseline' || markerSel === 'play') {
-    // Only pids whose rows that day contain only that family
+    // Only PIDs whose rows that day contain only that family
     const byPid = groupBy(base, r => r.pid || r.accessCode || 'UNKNOWN');
     const keepRows = [];
     for (const [pid, rows] of byPid) {
       const classes = new Set(rows.map(x => x.markerClass));
       if (classes.size === 1 && classes.has(markerSel)) {
-        // sort, dedupe duplicates, return unique start/stop sequence, mark orphans
         const sorted = rows.slice().sort((a,b) => (a.tsMs ?? 0) - (b.tsMs ?? 0));
         const seq = uniquePairsWithOrphans(sorted);
         keepRows.push(...seq);
@@ -285,7 +332,13 @@ function render() {
     }
     base = keepRows;
   } else {
-    base = base.filter(r => r.markerClass === markerSel);
+    // NEW: for other markers, show ALL rows for any PID that has the chosen marker
+    const pidHasMarker = new Set(
+      base
+        .filter(r => r.markerClass === markerSel)
+        .map(r => r.pid || r.accessCode || 'UNKNOWN')
+    );
+    base = base.filter(r => pidHasMarker.has(r.pid || r.accessCode || 'UNKNOWN'));
   }
 
   // Group by PID for display and sort time
@@ -313,36 +366,38 @@ function render() {
     const table = document.createElement('table');
     table.className = 'mini';
     table.innerHTML = `
-      <thead>
-        <tr>
-          <th>id</th>
-          <th>Access Code</th>
-          <th>Date</th>
-          <th>Time</th>
-          <th>Marker</th>
-          <th>File</th>
+  <thead>
+    <tr>
+      <th>Access Code</th>
+      <th>Date</th>
+      <th>Time</th>
+      <th>Marker</th>
+      <th class="file-col">File <span class="file-hint">(hover over to see the full name!)</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    ${arr.map(r => {
+      const ms = r.jotMs ?? r.tsMs;
+      const dateStr = ms ? formatDate(ms) : '';
+      const timeStr = ms ? formatTime(ms) : '';
+      const orphanStyle = r.__orphan ? ' style="background:#ffe5e5;"' : '';
+      return `
+        <tr${orphanStyle}>
+          <td>${escapeHtml(r.accessCode)}</td>
+          <td>${escapeHtml(dateStr)}</td>
+          <td>${escapeHtml(timeStr)}</td>
+          <td>${escapeHtml(r.marker)}</td>
+          <td title="${escapeHtml(r.fileName)}">${escapeHtml(shorten(r.fileName))}</td>
         </tr>
-      </thead>
-      <tbody>
-        ${arr.map(r => {
-          const ms = r.jotMs ?? r.tsMs;
-          const dateStr = ms ? formatDate(ms) : '';
-          const timeStr = ms ? formatTime(ms) : '';
-          const orphanStyle = r.__orphan ? ' style="background:#ffe5e5;"' : '';
-          return `
-            <tr${orphanStyle}>
-              <td>${escapeHtml(r.id)}</td>
-              <td>${escapeHtml(r.accessCode)}</td>
-              <td>${escapeHtml(dateStr)}</td>
-              <td>${escapeHtml(timeStr)}</td>
-              <td>${escapeHtml(r.marker)}</td>
-              <td title="${escapeHtml(r.fileName)}">${escapeHtml(shorten(r.fileName))}</td>
-            </tr>
-          `;
-        }).join('')}
-      </tbody>
-    `;
-    card.appendChild(table);
+      `;
+    }).join('')}
+  </tbody>
+`;
+    const scroller = document.createElement('div');
+scroller.className = 'table-scroll';
+scroller.appendChild(table);
+card.appendChild(scroller);
+
     els.results.appendChild(card);
   }
 
@@ -422,6 +477,7 @@ function loadFiles(fileList) {
     state.rows = merged;
 
     buildCalendarIndexes(state.rows);
+    fillPidSelectForDate();
     fillYearMonthDaySelects();
     updateStats();
     render();
@@ -466,18 +522,20 @@ function parseXLSX(file, filename) {
 }
 
 // ---------- filters
-
-els.year.addEventListener('change', () => { refreshMonthOptions(); render(); });
-els.month.addEventListener('change', () => { refreshDayOptions(); render(); });
-els.day.addEventListener('change', render);
+els.pid.addEventListener('change', render);
+els.year.addEventListener('change', () => { refreshMonthOptions(); fillPidSelectForDate(); render(); });
+els.month.addEventListener('change', () => { refreshDayOptions(); fillPidSelectForDate(); render(); });
+els.day.addEventListener('change',   () => {                       fillPidSelectForDate(); render(); });
 els.marker.addEventListener('change', render);
 els.clearBtn.addEventListener('click', () => {
   els.year.value = '';
   els.month.value = '';
   els.day.value = '';
   els.marker.value = 'baseline';   // reset to Baseline Start/Stop
+  els.pid.value = '';
   refreshMonthOptions();
   refreshDayOptions();
+  fillPidSelectForDate();
   render();
 });
 
@@ -492,6 +550,7 @@ if (window.MIRAGE_BUNDLE && Array.isArray(window.MIRAGE_BUNDLE)) {
     if (loaderSection) loaderSection.style.display = "none";
 
     buildCalendarIndexes(state.rows);
+    fillPidSelectForDate();
     fillYearMonthDaySelects();
     updateStats();
     render();
