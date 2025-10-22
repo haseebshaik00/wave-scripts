@@ -1,25 +1,68 @@
+options(stringsAsFactors = FALSE)
 
-# --------------- Step 1 - Include header file - which has access to raw data ---------------
-# This stores raw data paths into variables mentioned below
-rm(list = c(
-  "search.year.num","search.month.num","search.day.num",
-  "search_date","cutoff_date",
-  "ecg_date_folder","eda_date_folder",
-  "ecg_date_path","eda_date_path"
-), envir = .GlobalEnv)
-gc()
-source("R/recruitment-header.R")
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(lubridate)
+  library(purrr)
+  library(tidyr)
+  library(data.table)
+  library(stringr)
+  library(tibble)
+  library(openxlsx)
+  quietly <- capture.output(requireNamespace("readxl", quietly = TRUE))
+})
+# ===========================
+# T-drive file acquisition
+# ===========================
 
-# Below are the variables that has raw data's info
-# mirage_folders has access to all mirage excel files whereas
-# day_ecg_subfolders and day_eda_excel_files folders has 
-# the PID data folders - to be specific
+# --- 1) Config (hardcode your run date here) ---
+SEARCH_DATE <- as.Date("2023-03-22")  # << change me
 
-# Quick peek
+T_ROOT      <- file.path("T:", "Bangladesh", "Raw data")
+HRV_ROOT    <- file.path(T_ROOT, "HRV", "Wave 1 data", "1. Recruitment Pregnant Women")
+EDA_ROOT    <- file.path(T_ROOT, "EDA", "1. Recruitment Pregnant Women")
+MIRAGE_ROOT <- file.path(T_ROOT, "MIRAGE")
+
+# Derive folder names used on disk
+month_label      <- format(SEARCH_DATE, "%B %Y")   # e.g., "March 2023"
+date_folder      <- format(SEARCH_DATE, "%Y%m%d")  # e.g., "20230311"
+search_date      <- SEARCH_DATE
+search.year.num  <- as.integer(format(SEARCH_DATE, "%Y"))
+search.month.num <- as.integer(format(SEARCH_DATE, "%m"))
+search.day.num   <- as.integer(format(SEARCH_DATE, "%d"))
+
+# Final date paths
+ecg_date_path <- file.path(HRV_ROOT, month_label, date_folder)  # HRV/ECG PIDs live here
+eda_date_path <- file.path(EDA_ROOT, month_label, date_folder)  # EDA PID files live here
+
+cat("\n--- T-drive paths ---\n")
+cat("ECG path :", normalizePath(ecg_date_path, winslash = "/", mustWork = FALSE), "\n")
+cat("EDA path :", normalizePath(eda_date_path, winslash = "/", mustWork = FALSE), "\n")
+cat("MIRAGE   :", normalizePath(MIRAGE_ROOT, winslash = "/", mustWork = FALSE), "\n")
+
+# --- 2) ECG/HRV: list 5-digit PID subfolders for the date ---
+day_ecg_subfolders <- if (dir.exists(ecg_date_path)) {
+  entries <- list.files(ecg_date_path, all.files = FALSE, no.. = TRUE)
+  entries <- entries[dir.exists(file.path(ecg_date_path, entries))]
+  grep("^\\d{5}$", entries, value = TRUE)
+} else character(0)
+
+# --- 3) EDA: pick only direct PID files (exclude *_converted, *_userpreferences, .mw) ---
+day_eda_excel_files <- if (dir.exists(eda_date_path)) {
+  all  <- list.files(eda_date_path, full.names = TRUE, recursive = FALSE)
+  keep <- grep("(?i)^(?:.*/)?\\d{5}\\.(csv|xlsx|xls)$", all, perl = TRUE, value = TRUE)
+  keep[!grepl("(?i)converted|userpreferences|\\.mw$", keep)]
+} else character(0)
+
+# --- 4) MIRAGE: collect all CSVs (filter by date later in your code) ---
+mirage_folders <- if (dir.exists(MIRAGE_ROOT)) {
+  list.files(MIRAGE_ROOT, pattern = "(?i)\\.csv$", full.names = TRUE, recursive = TRUE)
+} else character(0)
+
+# --- 5) Quick peek (same style as your Output #1) ---
 cat("\n--------------- Output #1 ---------------\n")
 cat("Selected date            :", format(search_date, "%Y-%m-%d"), "\n")
-
-cat("ECG folder (YYYY-MM-DD)  :", basename(ecg_date_path),
+cat("ECG folder (YYYYMMDD)    :", basename(ecg_date_path),
     " | exists? ", dir.exists(ecg_date_path), "\n")
 cat("ECG PID subfolders found :", length(day_ecg_subfolders), "\n")
 print(day_ecg_subfolders)
@@ -32,6 +75,7 @@ print(basename(day_eda_excel_files))
 cat("\nTotal MIRAGE CSV files   :", length(mirage_folders), " (top 5 below)\n")
 print(head(mirage_folders, 5))
 cat("----------------------------------------------------\n")
+
 
 # --------------- Step - 2: Filter ECG excel files ---------------
 # Issue #2: After confirmation will change this to --> ECG start time closest to Mirage time filtering idea
@@ -97,7 +141,7 @@ mirage.long$participantID <- gsub("PID", "", mirage.long$participantID) %>% as.n
 
 cat("--------------- Output #3 ---------------\n")
 cat("Mirage Data Found =", nrow(mirage.long), "\n")
-print(head(mirage.long))
+print(mirage.long)
 cat("Unique PIDs List in Mirage =", nrow(unique.id), "\n")
 print(head(unique.id))
 cat("-----------------------------------------\n")
@@ -266,39 +310,39 @@ summarize_ecg_file <- function(fp) {
   tryCatch({
     ecg.data <- suppressWarnings(read.csv(fp, skip = 11, header = TRUE, check.names = FALSE))
     if (nrow(ecg.data) == 0) stop("no rows after skip=11")
-
+    
     # Standardize first columns safely
     nm <- names(ecg.data)
     if (length(nm) >= 1) nm[1] <- "timestamp"
     if (length(nm) >= 2) nm[2] <- "ecg"
     if (length(nm) >= 3) nm[3] <- "ecg_mV"
     names(ecg.data) <- nm
-
+    
     # Pick unit (s / ms / µs)
     scale <- .guess_epoch_scale(ecg.data$timestamp)
-
+    
     # Start/stop (raw + clocks)
     ts_start_raw <- suppressWarnings(as.numeric(ecg.data$timestamp[1]))
     ts_end_raw   <- suppressWarnings(as.numeric(ecg.data$timestamp[nrow(ecg.data)]))
-
+    
     start_clock_utc <- lubridate::as_datetime(ts_start_raw / scale, tz = "UTC")
     stop_clock_utc  <- lubridate::as_datetime(ts_end_raw   / scale, tz = "UTC")
-
+    
     tibble::tibble(
       participantID = extract_pid(fp),
       ECG.File      = fp,
       ECG.Size.KB   = round(file.info(fp)$size / 1024, 2),
-
+      
       # keep raw epoch from file (unscaled)
       ECG.Start.UTC = ts_start_raw,
       ECG.Stop.UTC  = ts_end_raw,
-
+      
       # clock times
       ECG.Start.Clock.Original = start_clock_utc,
       ECG.Stop.Clock.Original  = stop_clock_utc,
       ECG.Start.Clock.Dhaka    = lubridate::with_tz(start_clock_utc, "Asia/Dhaka"),
       ECG.Stop.Clock.Dhaka     = lubridate::with_tz(stop_clock_utc,  "Asia/Dhaka"),
-
+      
       ECG.Duration.Min = as.numeric(difftime(stop_clock_utc, start_clock_utc, units = "mins")),
       ECG.Sample.Count = nrow(ecg.data),
       .error = NA_character_
@@ -356,7 +400,7 @@ read_eda_summary <- function(f) {
   if (length(lines) == 0) {
     warning("Empty file: ", f); return(NULL)
   }
-
+  
   # 1) Find the header row of the data block
   #    Prefer a line that starts with SECOND (typical eSense export).
   hdr_idx <- grep("^\\s*SECOND[;,\\t]", lines, perl = TRUE)
@@ -368,11 +412,11 @@ read_eda_summary <- function(f) {
     warning("No header row found in: ", f); return(NULL)
   }
   hdr_idx <- hdr_idx[1]
-
+  
   # 2) Detect delimiter from the header line
   hdr_line <- lines[hdr_idx]
   sep <- if (grepl(";", hdr_line)) ";" else if (grepl(",", hdr_line)) "," else "\t"
-
+  
   # 3) Read the table beginning at the header
   df <- tryCatch(
     read.table(
@@ -382,28 +426,28 @@ read_eda_summary <- function(f) {
     error = function(e) { warning("Failed to read: ", f, " — ", e$message); NULL }
   )
   if (is.null(df) || !nrow(df)) return(NULL)
-
+  
   # 4) Identify the timestamp column
   ts_col <- intersect(c("TIMESTAMP", "Timestamp", "TIME", "Time"), names(df))
   if (!length(ts_col)) { warning("No TIMESTAMP column in: ", f); return(NULL) }
   ts <- as.character(df[[ts_col[1]]])
-
+  
   # 5) Extract first & last non-empty timestamps; keep only HH:MM:SS
   nz <- which(!is.na(ts) & nzchar(ts))
   if (!length(nz)) { warning("No timestamp values in: ", f); return(NULL) }
   start_raw <- ts[min(nz)]
   stop_raw  <- ts[max(nz)]
-
+  
   extract_hms <- function(x) {
     m <- regmatches(x, regexpr("\\b\\d{2}:\\d{2}:\\d{2}\\b", x))
     if (!length(m)) NA_character_ else m
   }
   eda_start <- extract_hms(start_raw)
   eda_stop  <- extract_hms(stop_raw)
-
+  
   # 6) PID from filename (your files are .../YYYYMMDD/41001.csv)
   pid <- suppressWarnings(as.numeric(tools::file_path_sans_ext(basename(f))))
-
+  
   data.frame(
     participantID = pid,
     EDA.File = f,
@@ -737,4 +781,3 @@ openxlsx::write.xlsx(
 )
 
 cat("File written to:", normalizePath(out_path), "\n")
-
